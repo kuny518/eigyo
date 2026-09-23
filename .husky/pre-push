@@ -1,3 +1,11 @@
+# main への直接 push を禁止する（GitHub Free の private リポジトリではブランチ保護が使えないため）
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    echo "main への直接 push はできません。ブランチを切って PR を作成してください。" >&2
+    exit 1
+  fi
+done
+
 npm run lint
 npm run typecheck
 npm test
