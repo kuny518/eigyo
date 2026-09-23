@@ -66,6 +66,9 @@ setup: ## GCP の初期構築（API 有効化・Artifact Registry・サービス
 	done
 	@$(call RETRY,$(GCLOUD) storage buckets add-iam-policy-binding $(SOURCE_BUCKET) \
 		--member=serviceAccount:$(DEPLOY_SA) --role=roles/storage.admin)
+	@# gcloud run deploy は、実行者がイメージを読み取れるかを確認する
+	@$(call RETRY,$(GCLOUD) artifacts repositories add-iam-policy-binding $(AR_REPO) --location=$(REGION) \
+		--member=serviceAccount:$(DEPLOY_SA) --role=roles/artifactregistry.reader)
 	@for sa in $(RUNTIME_SA) $(BUILD_SA); do \
 		$(call RETRY,$(GCLOUD) iam service-accounts add-iam-policy-binding $$sa \
 			--member=serviceAccount:$(DEPLOY_SA) --role=roles/iam.serviceAccountUser) || exit 1; \
