@@ -18,8 +18,8 @@ Sep 23, 2026 · @Someone
 
 | ロール | 主な操作 | 閲覧範囲 |
 | --- | --- | --- |
-| 営業 | 自分の日報の作成・編集・提出、コメント閲覧 | 自分の日報 |
-| 上長 | 部下の日報閲覧、Problem/Planへのコメント | 自分と直属部下の日報 |
+| 営業 | 自分の日報の作成・編集・提出、コメント閲覧・返信 | 自分の日報 |
+| 上長 | 部下の日報閲覧、Problem/Planへのコメント・返信 | 自分と直属部下の日報 |
 | 管理者 | 顧客マスタ・営業マスタの登録・更新・無効化 | 全日報 |
 
 ## 3. 機能要件
@@ -34,7 +34,7 @@ Sep 23, 2026 · @Someone
 | F-04 | Problem/Plan入力 | 今の課題・相談(Problem)と明日やること(Plan)をそれぞれ入力 | 営業 |
 | F-05 | 日報提出 | 下書き→提出済に変更。提出後は上長に通知 | 営業 |
 | F-06 | 日報一覧・検索 | 期間・営業・顧客で絞り込み。上長は部下分、管理者は全件 | 全員 |
-| F-07 | コメント | 上長がProblem・Planそれぞれにコメントを複数件投稿。営業は閲覧(返信可否は未決) | 上長 |
+| F-07 | コメント | 上長がProblem・Planそれぞれにコメントを複数件投稿。営業(日報の本人)と上長はコメントに返信可(1階層まで) | 上長・営業 |
 | F-08 | 顧客マスタ管理 | 顧客の登録・更新・無効化(削除は論理削除) | 管理者 |
 | F-09 | 営業マスタ管理 | 営業(社員)の登録・更新・無効化、上長の設定 | 管理者 |
 
@@ -58,7 +58,7 @@ stateDiagram-v2
 | customer | 顧客マスタ | 訪問先の顧客情報 | 担当営業を任意で保持 |
 | daily\_report | 日報 | 1営業1日1件のヘッダ。Problem/Planを持つ | (staff\_id, report\_date)で一意 |
 | visit\_record | 訪問記録 | 日報明細。顧客+訪問内容 | 1日報に0〜n件 |
-| comment | コメント | 上長からのコメント | target\_typeでProblem/Planを区別 |
+| comment | コメント | 上長からのコメントとその返信 | target\_typeでProblem/Planを区別。parent\_comment\_idで返信先を自テーブル参照 |
 
 ### 主要項目
 
@@ -66,7 +66,7 @@ stateDiagram-v2
 - **customer**:customer\_id、顧客名、業種、住所、電話番号、担当営業ID、有効フラグ
 - **daily\_report**:report\_id、staff\_id、report\_date、problem、plan、status、提出日時
 - **visit\_record**:visit\_id、report\_id、customer\_id、訪問開始/終了時刻、訪問内容、表示順
-- **comment**:comment\_id、report\_id、commenter\_id、target\_type(PROBLEM/PLAN)、本文
+- **comment**:comment\_id、report\_id、commenter\_id、parent\_comment\_id(返信先)、target\_type(PROBLEM/PLAN)、本文
 
 全テーブル共通で作成日時・更新日時を持つ。
 
@@ -80,6 +80,7 @@ erDiagram
     SALES_STAFF ||--o{ COMMENT : "投稿する"
     DAILY_REPORT ||--o{ VISIT_RECORD : "含む"
     DAILY_REPORT ||--o{ COMMENT : "受ける"
+    COMMENT ||--o{ COMMENT : "返信される"
     CUSTOMER ||--o{ VISIT_RECORD : "訪問される"
 
     SALES_STAFF {
@@ -135,6 +136,7 @@ erDiagram
         int comment_id PK
         int report_id FK
         int commenter_id FK "コメント者"
+        int parent_comment_id FK "返信先(トップレベルのみ)"
         string target_type "PROBLEM/PLAN"
         text body "コメント本文"
         datetime created_at
@@ -143,6 +145,8 @@ erDiagram
 ```
 
 コメントはProblemとPlanで別テーブルにせず、target\_typeで区別して1テーブルにまとめている。
+
+返信も同じテーブルに持ち、parent\_comment\_idで返信先を表す。返信は1階層までとし、トップレベルのコメント(上長が投稿)にのみ返信できる。返信のtarget\_typeは返信先と同じ値にする。
 
 ## 6. 非機能要件
 
@@ -159,7 +163,7 @@ erDiagram
 
 ## 7. 未決事項・確認したい点
 
-- [ ] コメントは上長のみか、営業も返信できるスレッド形式にするか
+- [x] ~~コメントは上長のみか、営業も返信できるスレッド形式にするか~~ → 営業(本人)と上長が返信可、1階層まで(#1)
 - [ ] 訪問記録に顧客側の面談者(担当者名)を持たせるか(顧客担当者マスタの要否)
 - [ ] 訪問内容に商談ステータスや金額など構造化項目を持たせるか
 - [ ] 上長は1人固定か、複数上長・部署単位の閲覧が必要か
