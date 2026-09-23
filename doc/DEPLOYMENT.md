@@ -54,19 +54,18 @@ GitHub 側の設定：
 
 ---
 
-## 4. main ブランチの保護について（制約）
+## 4. main ブランチの保護
 
-このリポジトリは GitHub Free の private リポジトリのため、**ブランチ保護とルールセットが使えない**（API は 403 を返す）。そのため「main への直接 push の禁止」「PR のマージ前に CI 成功を必須にする」は GitHub 側で強制できない。
+リポジトリは public。`make setup-github` で main に次のブランチ保護を設定している。
 
-代わりに次の対策を入れている。
-
-| 対策 | 内容 | 限界 |
+| 設定 | 値 | 理由 |
 | --- | --- | --- |
-| pre-push フック | `.husky/pre-push` で main への push を拒否する | ローカルのフックなので `--no-verify` で回避できる |
-| WIF の条件 | main 以外のブランチからはデプロイできない | main への直接 push 自体は防げない |
-| production environment | main 以外のブランチからは deploy ジョブを実行できない | 同上 |
+| PR 必須 | 承認数 0 | 1人開発のため承認は求めず、PR 経由のマージだけを強制する |
+| 必須ステータスチェック | `ci`（GitHub Actions のみ） | lint・typecheck・テスト・build が通らないとマージできない。App ID で Actions に限定し、ステータスの偽装を防ぐ |
+| 管理者にも適用 | 有効 | 管理者も main へ直接 push できない |
+| force push・ブランチ削除 | 禁止 | 履歴の書き換えを防ぐ |
 
-GitHub 側で強制するには、GitHub Pro 以上にアップグレードするか、リポジトリを public にする必要がある。
+ローカルの `.husky/pre-push` でも main への push を拒否し、push の前に気付けるようにしている。
 
 ---
 

@@ -95,6 +95,12 @@ setup-github: ## GitHub Actions からのキーレス認証（WIF）と GitHub �
 		gh api -X PUT repos/$(GITHUB_REPO)/environments/production --input - --silent
 	gh api repos/$(GITHUB_REPO)/environments/production/deployment-branch-policies -q '.branch_policies[].name' | grep -qx main || \
 		gh api -X POST repos/$(GITHUB_REPO)/environments/production/deployment-branch-policies -f name=main -f type=branch --silent
+	@# main の保護：PR 必須（承認は不要）、CI（ci ジョブ）の成功が必須、管理者にも適用、force push・削除の禁止
+	@# 15368 は GitHub Actions の App ID（Actions 以外がステータスを偽装できないようにする）
+	echo '{"required_status_checks":{"strict":false,"checks":[{"context":"ci","app_id":15368}]}, \
+		"enforce_admins":true,"required_pull_request_reviews":{"required_approving_review_count":0}, \
+		"restrictions":null,"allow_force_pushes":false,"allow_deletions":false}' | \
+		gh api -X PUT repos/$(GITHUB_REPO)/branches/main/protection --input - --silent
 	@echo "setup-github 完了（repository_id=$(GITHUB_REPO_ID)）"
 
 secret: ## DATABASE_URL を Secret Manager に登録・更新（入力は画面に表示しない）
