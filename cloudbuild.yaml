@@ -1,0 +1,9 @@
+# make build から呼ばれる。_IMAGE は Makefile が渡す
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_IMAGE}", "."]
+images:
+  - "${_IMAGE}"
+options:
+  # 専用のビルド用サービスアカウントで実行するため、ログは Cloud Logging のみに出す
+  logging: CLOUD_LOGGING_ONLY

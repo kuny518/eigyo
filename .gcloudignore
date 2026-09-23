@@ -1,0 +1,15 @@
+# gcloud builds submit でアップロードしないもの（.dockerignore と揃える）
+.git
+.github
+node_modules
+.next
+generated
+coverage
+test-results
+playwright-report
+blob-report
+.serena
+.env
+.env*.local
+# google-github-actions/auth が作業ディレクトリに書き出す認証情報
+gha-creds-*.json
