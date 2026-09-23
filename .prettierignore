@@ -1,0 +1,10 @@
+.next
+out
+build
+coverage
+package-lock.json
+*.md
+.serena
+test-results
+playwright-report
+blob-report

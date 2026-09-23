@@ -1,0 +1,161 @@
+// 営業日報システム データモデル
+// 定義元：CLAUDE.md「4. データ要件」「5. ER図」、doc/SCREEN_DESIGN.md、doc/API_SCHEME.md
+// テーブル名・カラム名は設計書どおり snake_case（@@map / @map）、Prisma Client 上は camelCase。
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------
+// 列挙型
+// ---------------------------------------------------------------
+
+enum Role {
+  SALES
+  MANAGER
+  ADMIN
+}
+
+// 差し戻しは DRAFT に戻す（RETURNED を独立させるかは未決）
+enum ReportStatus {
+  DRAFT
+  SUBMITTED
+  REVIEWED
+}
+
+enum CommentTargetType {
+  PROBLEM
+  PLAN
+}
+
+// ---------------------------------------------------------------
+// マスタ
+// ---------------------------------------------------------------
+
+/// 営業マスタ（営業担当者・上長・管理者）
+model SalesStaff {
+  staffId            Int      @id @default(autoincrement()) @map("staff_id")
+  name               String   @db.VarChar(50)
+  /// ログインID
+  email              String   @unique @db.VarChar(254)
+  /// ハッシュ化したパスワード（平文は保存しない）
+  passwordHash       String   @map("password_hash") @db.VarChar(255)
+  /// 初回ログイン時にパスワード変更を促す
+  mustChangePassword Boolean  @default(true) @map("must_change_password")
+  department         String   @db.VarChar(50)
+  position           String?  @db.VarChar(50)
+  /// 上長ID（自テーブル参照）。自己参照・循環はアプリ側でチェック
+  managerId          Int?     @map("manager_id")
+  role               Role
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  manager           SalesStaff?   @relation("ManagerSubordinates", fields: [managerId], references: [staffId], onDelete: Restrict)
+  subordinates      SalesStaff[]  @relation("ManagerSubordinates")
+  assignedCustomers Customer[]
+  dailyReports      DailyReport[]
+  comments          Comment[]
+
+  @@index([managerId])
+  @@index([department])
+  @@map("sales_staff")
+}
+
+/// 顧客マスタ
+model Customer {
+  customerId      Int      @id @default(autoincrement()) @map("customer_id")
+  /// 同名の有効顧客は警告のみ（一意制約なし）
+  customerName    String   @map("customer_name") @db.VarChar(100)
+  /// 選択肢は未決（マスタ化の可能性あり）
+  industry        String?  @db.VarChar(50)
+  address         String?  @db.VarChar(200)
+  phone           String?  @db.VarChar(20)
+  assignedStaffId Int?     @map("assigned_staff_id")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  assignedStaff SalesStaff?   @relation(fields: [assignedStaffId], references: [staffId], onDelete: Restrict)
+  visitRecords  VisitRecord[]
+
+  @@index([assignedStaffId])
+  @@index([customerName])
+  @@map("customer")
+}
+
+// ---------------------------------------------------------------
+// トランザクション
+// ---------------------------------------------------------------
+
+/// 日報（1営業×1日=1件）
+model DailyReport {
+  reportId    Int          @id @default(autoincrement()) @map("report_id")
+  staffId     Int          @map("staff_id")
+  reportDate  DateTime     @map("report_date") @db.Date
+  /// 課題・相談（2,000文字以内）
+  problem     String?      @db.Text
+  /// 明日やること（2,000文字以内）
+  plan        String?      @db.Text
+  status      ReportStatus @default(DRAFT)
+  /// 差し戻し時は null に戻す
+  submittedAt DateTime?    @map("submitted_at") @db.Timestamptz(3)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  staff        SalesStaff    @relation(fields: [staffId], references: [staffId], onDelete: Restrict)
+  visitRecords VisitRecord[]
+  comments     Comment[]
+
+  @@unique([staffId, reportDate])
+  @@index([reportDate])
+  @@index([status, reportDate])
+  @@map("daily_report")
+}
+
+/// 訪問記録（日報明細。1日報に0〜20件）
+model VisitRecord {
+  visitId      Int       @id @default(autoincrement()) @map("visit_id")
+  reportId     Int       @map("report_id")
+  customerId   Int       @map("customer_id")
+  visitStart   DateTime? @map("visit_start") @db.Time(0)
+  /// visit_start ≦ visit_end はアプリ側でチェック
+  visitEnd     DateTime? @map("visit_end") @db.Time(0)
+  /// 訪問内容（1〜2,000文字）
+  visitContent String    @map("visit_content") @db.Text
+  /// 表示順（1始まり）
+  sortOrder    Int       @map("sort_order")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  report   DailyReport @relation(fields: [reportId], references: [reportId], onDelete: Cascade)
+  customer Customer    @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
+
+  @@index([reportId, sortOrder])
+  @@index([customerId])
+  @@map("visit_record")
+}
+
+/// コメント（上長から Problem / Plan へ）
+model Comment {
+  commentId   Int               @id @default(autoincrement()) @map("comment_id")
+  reportId    Int               @map("report_id")
+  commenterId Int               @map("commenter_id")
+  targetType  CommentTargetType @map("target_type")
+  /// コメント本文（1〜1,000文字）
+  body        String            @db.Text
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  report    DailyReport @relation(fields: [reportId], references: [reportId], onDelete: Cascade)
+  commenter SalesStaff  @relation(fields: [commenterId], references: [staffId], onDelete: Restrict)
+
+  @@index([reportId, targetType, createdAt])
+  @@index([commenterId])
+  @@map("comment")
+}
