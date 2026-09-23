@@ -21,10 +21,12 @@ enum Role {
   ADMIN
 }
 
-// 差し戻しは DRAFT に戻す（RETURNED を独立させるかは未決）
+// DRAFT→SUBMITTED（提出）、SUBMITTED→REVIEWED（確認）、SUBMITTED→RETURNED（差し戻し）、
+// RETURNED→SUBMITTED（再提出）。本人が編集できるのは DRAFT と RETURNED のみ
 enum ReportStatus {
   DRAFT
   SUBMITTED
+  RETURNED
   REVIEWED
 }
 
@@ -103,7 +105,7 @@ model DailyReport {
   /// 明日やること（2,000文字以内）
   plan        String?      @db.Text
   status      ReportStatus @default(DRAFT)
-  /// 差し戻し時は null に戻す
+  /// 最後に提出した日時。差し戻し時は null に戻し、再提出時に記録し直す
   submittedAt DateTime?    @map("submitted_at") @db.Timestamptz(3)
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)

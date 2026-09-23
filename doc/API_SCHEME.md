@@ -200,7 +200,8 @@
     "status": "DRAFT"
   },
   "my_drafts": [
-    { "report_id": 1040, "report_date": "2026-09-21", "status": "DRAFT" }
+    { "report_id": 1040, "report_date": "2026-09-21", "status": "DRAFT" },
+    { "report_id": 1036, "report_date": "2026-09-18", "status": "RETURNED" }
   ],
   "recent_comments": [
     {
@@ -241,12 +242,12 @@
 
 | 項目 | 対象ロール | 備考 |
 | --- | --- | --- |
-| today | 営業・上長 | 当日の自分の日報。未作成なら `report_id: null, status: "NOT_CREATED"` |
-| my_drafts | 営業・上長 | 自分の下書き（当日除く） |
+| today | 営業・上長 | 当日の自分の日報（status は DRAFT / SUBMITTED / RETURNED / REVIEWED）。未作成なら `report_id: null, status: "NOT_CREATED"` |
+| my_drafts | 営業・上長 | 自分の下書き（DRAFT）と差し戻し中（RETURNED）の日報（当日除く）。報告日の降順 |
 | recent_comments | 営業・上長 | 自分の日報へのコメント・返信の最新5件（自分の投稿は除く）。本文は先頭30文字。`is_reply` は返信かどうか |
 | recent_replies | 上長 | 自分が投稿したコメントへの返信の最新5件（自分の投稿は除く）。本文は先頭30文字 |
 | unreviewed_reports | 上長 | 直属部下の提出済（SUBMITTED）日報 |
-| not_submitted_today | 上長 | 当日未提出の直属部下 |
+| not_submitted_today | 上長 | 当日の日報が未作成・DRAFT・RETURNED の有効な直属部下。status は NOT_CREATED / DRAFT / RETURNED |
 
 ---
 
@@ -257,11 +258,13 @@
 | 値 | 表示名 | 遷移元 → 遷移先 | 実行API |
 | --- | --- | --- | --- |
 | DRAFT | 下書き | （作成時） | R-02 |
-| SUBMITTED | 提出済 | DRAFT → SUBMITTED | R-05 |
+| SUBMITTED | 提出済 | DRAFT → SUBMITTED、RETURNED → SUBMITTED（再提出） | R-05 |
+| RETURNED | 差し戻し | SUBMITTED → RETURNED | R-07 |
 | REVIEWED | 確認済 | SUBMITTED → REVIEWED | R-06 |
-| DRAFT | 下書き（差し戻し） | SUBMITTED → DRAFT | R-07 |
 
-> 差し戻しを独立ステータス（RETURNED）にするかは未決。採用する場合、R-07の遷移先と `status` の値域を変更する。
+- 本人が編集（R-04）・提出（R-05）できるのは `DRAFT` と `RETURNED` のみ。`SUBMITTED` と `REVIEWED` は編集できない
+- `RETURNED` の日報を編集しても `RETURNED` のまま（再提出で `SUBMITTED` になる）
+- 上記以外の遷移は 409 `INVALID_STATUS_TRANSITION`（例：`RETURNED` の確認、`REVIEWED` の差し戻し）
 
 #### R-01 GET /reports
 
@@ -273,11 +276,11 @@
 | date_to | date | - | 報告日の終了。date_from ≦ date_to |
 | staff_id | int | - | 営業ロールは指定しても自分に固定 |
 | customer_name | string | - | 訪問記録の顧客名で部分一致 |
-| status | string | - | カンマ区切りで複数可（例：`SUBMITTED,REVIEWED`） |
+| status | string | - | カンマ区切りで複数可（例：`SUBMITTED,RETURNED`）。`DRAFT` / `SUBMITTED` / `RETURNED` / `REVIEWED` |
 | sort | string | - | `report_date_desc`（初期）/ `report_date_asc` |
 | page, per_page | int | - | 3.2参照 |
 
-**閲覧範囲**：営業＝自分、上長＝自分＋直属部下、管理者＝全件。上長・管理者に他人の下書きを返すかは未決（初期案では返さない）。
+**閲覧範囲**：営業＝自分、上長＝自分＋直属部下、管理者＝全件。他人の `SUBMITTED` / `RETURNED` / `REVIEWED` は閲覧範囲内なら返す。他人の `DRAFT` を返すかは未決（初期案では返さない。#3）。
 
 **レスポンス 200**
 
@@ -404,14 +407,16 @@
 
 | 項目 | true になる条件 |
 | --- | --- |
-| can_comment | 直属の上長、かつ `SUBMITTED` / `REVIEWED`（トップレベルのコメントを投稿できる） |
-| can_reply | 日報の本人（ステータス問わず）、または直属の上長かつ `SUBMITTED` / `REVIEWED`（返信できる） |
+| can_edit / can_submit | 日報の本人、かつ `DRAFT` / `RETURNED` |
+| can_comment | 直属の上長、かつ `SUBMITTED` / `RETURNED` / `REVIEWED`（トップレベルのコメントを投稿できる） |
+| can_reply | 日報の本人（ステータス問わず）、または直属の上長かつ `SUBMITTED` / `RETURNED` / `REVIEWED`（返信できる） |
+| can_review / can_return | 直属の上長、かつ `SUBMITTED` |
 
 #### R-04 PUT /reports/{report_id}
 
 日報本体と訪問記録を丸ごと置き換える。
 
-**実行条件**：本人かつ `status = DRAFT`。それ以外は 409 `INVALID_STATUS_TRANSITION`（他人の日報は404）。
+**実行条件**：本人かつ `status` が `DRAFT` または `RETURNED`。それ以外は 409 `INVALID_STATUS_TRANSITION`（他人の日報は404）。ステータスは変わらない。
 
 **リクエスト**
 
@@ -435,7 +440,7 @@
 
 #### R-05 POST /reports/{report_id}/submit
 
-**実行条件**：本人かつ `status = DRAFT`
+**実行条件**：本人かつ `status` が `DRAFT` または `RETURNED`（差し戻し後の再提出）
 
 **提出時チェック（422）**
 
@@ -472,7 +477,7 @@
 | target_type | string | ○ | `PROBLEM` / `PLAN` |
 | body | string | ○ | 1〜1,000文字（差し戻し理由） |
 
-**処理**：差し戻し理由をコメントとして登録し、`status = DRAFT`、`submitted_at` をクリア、営業へ通知。1トランザクションで実行する。
+**処理**：差し戻し理由をコメント（トップレベル）として登録し、`status = RETURNED`、`submitted_at` をクリア、営業へ通知。1トランザクションで実行する。
 
 **レスポンス 200**：R-03と同じ形式
 
@@ -527,15 +532,15 @@
 
 | 種類 | 投稿できる人 | ステータス |
 | --- | --- | --- |
-| コメント（`parent_comment_id` なし） | 対象日報の営業の直属上長 | `SUBMITTED` / `REVIEWED` |
-| 返信（`parent_comment_id` あり） | 日報の本人 | 問わない（差し戻し理由への返信のため） |
-| 返信（`parent_comment_id` あり） | 対象日報の営業の直属上長 | `SUBMITTED` / `REVIEWED` |
+| コメント（`parent_comment_id` なし） | 対象日報の営業の直属上長 | `SUBMITTED` / `RETURNED` / `REVIEWED` |
+| 返信（`parent_comment_id` あり） | 日報の本人 | 問わない |
+| 返信（`parent_comment_id` あり） | 対象日報の営業の直属上長 | `SUBMITTED` / `RETURNED` / `REVIEWED` |
 
 - 営業がトップレベルのコメントを投稿しようとした場合と、管理者が投稿・返信しようとした場合は 403 `FORBIDDEN`
 - 閲覧範囲外の日報は 404 `NOT_FOUND`
 - ステータスが条件を満たさない場合は 409 `INVALID_STATUS_TRANSITION`
 
-> 差し戻すと日報は DRAFT に戻るため、営業が差し戻し理由に返信しても、上長が返信できるのは再提出後になる。#2 で RETURNED を採用する場合は、上長の返信条件に RETURNED を加える。
+差し戻し中（`RETURNED`）も上長はコメント・返信できるため、営業が差し戻し理由に返信で質問し、上長が答えてから再提出する、というやり取りができる。
 
 **リクエスト**
 
@@ -738,9 +743,9 @@ S-03の項目（`initial_password` を除く）に `is_active`（必須）と `u
 | 対象 | 営業 | 上長 | 管理者 |
 | --- | --- | --- | --- |
 | 日報の閲覧 | 自分 | 自分＋直属部下 | 全件 |
-| 日報の作成・編集・提出 | 自分（DRAFTのみ） | 自分（DRAFTのみ） | 不可 |
-| コメント投稿 | 不可 | 直属部下の提出済・確認済日報 | 不可 |
-| コメントへの返信 | 自分の日報 | 自分の日報、直属部下の提出済・確認済日報 | 不可 |
+| 日報の作成・編集・提出 | 自分（DRAFT・RETURNEDのみ） | 自分（DRAFT・RETURNEDのみ） | 不可 |
+| コメント投稿 | 不可 | 直属部下の提出済・差し戻し中・確認済日報 | 不可 |
+| コメントへの返信 | 自分の日報 | 自分の日報、直属部下の提出済・差し戻し中・確認済日報 | 不可 |
 | 確認・差し戻し | 不可 | 直属部下の提出済日報 | 不可 |
 | 顧客マスタ | 閲覧 | 閲覧 | 登録・更新 |
 | 営業マスタ | 自分のみ閲覧 | 自分＋部下を閲覧 | 登録・更新 |
@@ -751,7 +756,7 @@ S-03の項目（`initial_password` を除く）に `is_active`（必須）と `u
 
 ## 6. 未決事項（API関連）
 
-- [ ] 差し戻しを独立ステータス（RETURNED）にするか → R-07とステータス値域に影響
+- [x] ~~差し戻しを独立ステータス（RETURNED）にするか~~ → RETURNED を採用（#2）。R-04、R-05、R-07、R-01、R-03、C-02、D-01 に反映済み
 - [x] ~~営業のコメント返信を許可するか~~ → 本人と直属上長が返信可、1階層まで（#1）。C-01、C-02、R-03、D-01 に反映済み
 - [ ] 上長・管理者に他人の下書きを返すか → R-01、R-03の閲覧範囲
 - [ ] 訪問0件での提出を許可するか → R-05の提出時チェック
