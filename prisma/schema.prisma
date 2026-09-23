@@ -141,21 +141,28 @@ model VisitRecord {
   @@map("visit_record")
 }
 
-/// コメント（上長から Problem / Plan へ）
+/// コメント（上長から Problem / Plan へ。返信は1階層まで）
 model Comment {
-  commentId   Int               @id @default(autoincrement()) @map("comment_id")
-  reportId    Int               @map("report_id")
-  commenterId Int               @map("commenter_id")
-  targetType  CommentTargetType @map("target_type")
+  commentId       Int               @id @default(autoincrement()) @map("comment_id")
+  reportId        Int               @map("report_id")
+  commenterId     Int               @map("commenter_id")
+  /// 返信先のコメントID。null ならトップレベル（上長のみ投稿可）
+  /// 返信先はトップレベルのコメントに限る（返信への返信は不可）。アプリ側でチェック
+  parentCommentId Int?              @map("parent_comment_id")
+  /// 返信は返信先と同じ値にする
+  targetType      CommentTargetType @map("target_type")
   /// コメント本文（1〜1,000文字）
-  body        String            @db.Text
-  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  body            String            @db.Text
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  report    DailyReport @relation(fields: [reportId], references: [reportId], onDelete: Cascade)
-  commenter SalesStaff  @relation(fields: [commenterId], references: [staffId], onDelete: Restrict)
+  report        DailyReport @relation(fields: [reportId], references: [reportId], onDelete: Cascade)
+  commenter     SalesStaff  @relation(fields: [commenterId], references: [staffId], onDelete: Restrict)
+  parentComment Comment?    @relation("CommentReplies", fields: [parentCommentId], references: [commentId], onDelete: Cascade)
+  replies       Comment[]   @relation("CommentReplies")
 
   @@index([reportId, targetType, createdAt])
+  @@index([parentCommentId, createdAt])
   @@index([commenterId])
   @@map("comment")
 }

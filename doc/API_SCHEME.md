@@ -37,7 +37,7 @@
 | R-06 | POST | /reports/{report_id}/review | 確認済にする | - | ○ | - | SCR-05 |
 | R-07 | POST | /reports/{report_id}/return | 差し戻し | - | ○ | - | SCR-05 |
 | C-01 | GET | /reports/{report_id}/comments | コメント一覧取得 | ○ | ○ | ○ | SCR-05 |
-| C-02 | POST | /reports/{report_id}/comments | コメント投稿 | - | ○ | - | SCR-05 |
+| C-02 | POST | /reports/{report_id}/comments | コメント投稿・返信 | △ | ○ | - | SCR-05 |
 | M-01 | GET | /customers | 顧客一覧・検索 | ○ | ○ | ○ | SCR-04-M, SCR-06 |
 | M-02 | GET | /customers/recent | 最近訪問した顧客 | ○ | - | - | SCR-04-M |
 | M-03 | GET | /customers/{customer_id} | 顧客詳細取得 | ○ | ○ | ○ | SCR-07 |
@@ -48,7 +48,7 @@
 | S-03 | POST | /staff | 営業登録 | - | - | ○ | SCR-09 |
 | S-04 | PUT | /staff/{staff_id} | 営業更新・無効化 | - | - | ○ | SCR-09 |
 
-凡例：○＝利用可、△＝自分のみ返却、-＝403
+凡例：○＝利用可、△＝制限付き（S-01は自分のみ返却、C-02は自分の日報への返信のみ）、-＝403
 
 **設計方針**
 - 訪問記録（visit_record）は日報の明細として、日報の作成・更新APIで一括送信する（行ごとのAPIは設けない）。SCR-04の「保存」1回で全行を確定させるため。
@@ -209,7 +209,19 @@
       "report_date": "2026-09-20",
       "commenter_name": "佐藤 次郎",
       "target_type": "PROBLEM",
+      "is_reply": false,
       "body_excerpt": "10%までなら可。明日話そう"
+    }
+  ],
+  "recent_replies": [
+    {
+      "comment_id": 95,
+      "parent_comment_id": 90,
+      "report_id": 1044,
+      "report_date": "2026-09-22",
+      "commenter_name": "鈴木 花子",
+      "target_type": "PROBLEM",
+      "body_excerpt": "承知しました。明日10時に伺います"
     }
   ],
   "unreviewed_reports": [
@@ -231,7 +243,8 @@
 | --- | --- | --- |
 | today | 営業・上長 | 当日の自分の日報。未作成なら `report_id: null, status: "NOT_CREATED"` |
 | my_drafts | 営業・上長 | 自分の下書き（当日除く） |
-| recent_comments | 営業・上長 | 自分の日報への新着コメント最新5件。本文は先頭30文字 |
+| recent_comments | 営業・上長 | 自分の日報へのコメント・返信の最新5件（自分の投稿は除く）。本文は先頭30文字。`is_reply` は返信かどうか |
+| recent_replies | 上長 | 自分が投稿したコメントへの返信の最新5件（自分の投稿は除く）。本文は先頭30文字 |
 | unreviewed_reports | 上長 | 直属部下の提出済（SUBMITTED）日報 |
 | not_submitted_today | 上長 | 当日未提出の直属部下 |
 
@@ -286,7 +299,7 @@
 }
 ```
 
-`visit_customers` は先頭2件の顧客名。
+`visit_customers` は先頭2件の顧客名。`comment_count` は返信を含むコメントの件数。
 
 #### R-02 POST /reports
 
@@ -357,16 +370,28 @@
   "comments": [
     {
       "comment_id": 88,
+      "parent_comment_id": null,
       "commenter": { "staff_id": 3, "name": "佐藤 次郎" },
       "target_type": "PROBLEM",
       "body": "10%までなら可。明日話そう",
-      "created_at": "2026-09-22T19:10:00+09:00"
+      "created_at": "2026-09-22T19:10:00+09:00",
+      "replies": [
+        {
+          "comment_id": 89,
+          "parent_comment_id": 88,
+          "commenter": { "staff_id": 12, "name": "山田 太郎" },
+          "target_type": "PROBLEM",
+          "body": "ありがとうございます。10%で提示します",
+          "created_at": "2026-09-22T19:30:00+09:00"
+        }
+      ]
     }
   ],
   "permissions": {
     "can_edit": true,
     "can_submit": true,
     "can_comment": false,
+    "can_reply": true,
     "can_review": false,
     "can_return": false
   },
@@ -375,7 +400,12 @@
 }
 ```
 
-`permissions` はログインユーザーとステータスから算出し、画面のボタン表示制御に使う。
+`permissions` はログインユーザーとステータスから算出し、画面のボタン表示制御に使う。`comments` の形式は C-01 と同じ。
+
+| 項目 | true になる条件 |
+| --- | --- |
+| can_comment | 直属の上長、かつ `SUBMITTED` / `REVIEWED`（トップレベルのコメントを投稿できる） |
+| can_reply | 日報の本人（ステータス問わず）、または直属の上長かつ `SUBMITTED` / `REVIEWED`（返信できる） |
 
 #### R-04 PUT /reports/{report_id}
 
@@ -465,20 +495,47 @@
   "items": [
     {
       "comment_id": 88,
+      "parent_comment_id": null,
       "commenter": { "staff_id": 3, "name": "佐藤 次郎" },
       "target_type": "PROBLEM",
       "body": "10%までなら可。明日話そう",
-      "created_at": "2026-09-22T19:10:00+09:00"
+      "created_at": "2026-09-22T19:10:00+09:00",
+      "replies": [
+        {
+          "comment_id": 89,
+          "parent_comment_id": 88,
+          "commenter": { "staff_id": 12, "name": "山田 太郎" },
+          "target_type": "PROBLEM",
+          "body": "ありがとうございます。10%で提示します",
+          "created_at": "2026-09-22T19:30:00+09:00"
+        }
+      ]
     }
   ]
 }
 ```
 
-作成日時の昇順。
+- `items` はトップレベルのコメント（`parent_comment_id` が null）を作成日時の昇順で返す
+- 返信は親コメントの `replies` に作成日時の昇順で入れる。返信の要素は `replies` を持たない
+- `target_type` で絞り込んだ場合、返信も同じ条件で絞り込まれる（返信は親と同じ target_type のため）
 
 #### C-02 POST /reports/{report_id}/comments
 
-**実行条件**：対象日報の営業の直属上長、かつ `status` が `SUBMITTED` または `REVIEWED`
+コメント（トップレベル）の投稿と、コメントへの返信を行う。返信は1階層までで、返信への返信はできない。
+
+**実行条件**
+
+| 種類 | 投稿できる人 | ステータス |
+| --- | --- | --- |
+| コメント（`parent_comment_id` なし） | 対象日報の営業の直属上長 | `SUBMITTED` / `REVIEWED` |
+| 返信（`parent_comment_id` あり） | 日報の本人 | 問わない（差し戻し理由への返信のため） |
+| 返信（`parent_comment_id` あり） | 対象日報の営業の直属上長 | `SUBMITTED` / `REVIEWED` |
+
+- 営業がトップレベルのコメントを投稿しようとした場合と、管理者が投稿・返信しようとした場合は 403 `FORBIDDEN`
+- 閲覧範囲外の日報は 404 `NOT_FOUND`
+- ステータスが条件を満たさない場合は 409 `INVALID_STATUS_TRANSITION`
+
+> 差し戻すと日報は DRAFT に戻るため、営業が差し戻し理由に返信しても、上長が返信できるのは再提出後になる。#2 で RETURNED を採用する場合は、上長の返信条件に RETURNED を加える。
 
 **リクエスト**
 
@@ -486,16 +543,28 @@
 { "target_type": "PLAN", "body": "C社は部長同行で行こう。" }
 ```
 
+```json
+{ "parent_comment_id": 88, "body": "ありがとうございます。10%で提示します" }
+```
+
 | 項目 | 型 | 必須 | 制約 |
 | --- | --- | :-: | --- |
-| target_type | string | ○ | `PROBLEM` / `PLAN` |
+| parent_comment_id | int | - | 返信先のコメントID。同じ日報のトップレベルのコメントであること |
+| target_type | string | コメント時○ | `PROBLEM` / `PLAN`。返信時は省略可（返信先の値を使う）。指定した場合は返信先と一致すること |
 | body | string | ○ | 1〜1,000文字 |
 
-**処理**：コメント登録、営業へ通知。
+**入力チェック（422）**
+- `parent_comment_id` が存在しない、別の日報のコメント、または返信（`parent_comment_id` が null でない）を指している
+- 返信で `target_type` が返信先と異なる
 
-**レスポンス 201**：登録したコメント1件（C-01の items の要素と同じ形式）
+**処理**：コメントを登録し、通知する。
 
-> 営業の返信を許可する場合は、実行条件に「本人」を加え、`parent_comment_id` を追加する（未決）。
+| 種類 | 通知先 |
+| --- | --- |
+| コメント | 日報の本人 |
+| 返信 | 日報の本人と、返信先のコメントの投稿者（投稿した本人は除く） |
+
+**レスポンス 201**：登録したコメント1件（C-01の items の要素と同じ形式。返信の場合は `replies` を持たない）
 
 ---
 
@@ -670,7 +739,9 @@ S-03の項目（`initial_password` を除く）に `is_active`（必須）と `u
 | --- | --- | --- | --- |
 | 日報の閲覧 | 自分 | 自分＋直属部下 | 全件 |
 | 日報の作成・編集・提出 | 自分（DRAFTのみ） | 自分（DRAFTのみ） | 不可 |
-| コメント投稿・確認・差し戻し | 不可 | 直属部下の提出済日報 | 不可 |
+| コメント投稿 | 不可 | 直属部下の提出済・確認済日報 | 不可 |
+| コメントへの返信 | 自分の日報 | 自分の日報、直属部下の提出済・確認済日報 | 不可 |
+| 確認・差し戻し | 不可 | 直属部下の提出済日報 | 不可 |
 | 顧客マスタ | 閲覧 | 閲覧 | 登録・更新 |
 | 営業マスタ | 自分のみ閲覧 | 自分＋部下を閲覧 | 登録・更新 |
 
@@ -681,7 +752,7 @@ S-03の項目（`initial_password` を除く）に `is_active`（必須）と `u
 ## 6. 未決事項（API関連）
 
 - [ ] 差し戻しを独立ステータス（RETURNED）にするか → R-07とステータス値域に影響
-- [ ] 営業のコメント返信を許可するか → C-02の実行条件と `parent_comment_id` の追加
+- [x] ~~営業のコメント返信を許可するか~~ → 本人と直属上長が返信可、1階層まで（#1）。C-01、C-02、R-03、D-01 に反映済み
 - [ ] 上長・管理者に他人の下書きを返すか → R-01、R-03の閲覧範囲
 - [ ] 訪問0件での提出を許可するか → R-05の提出時チェック
 - [ ] 管理者に日報の閲覧だけでなくコメント権限を与えるか
